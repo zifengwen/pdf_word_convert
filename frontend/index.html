@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF2Word - 文档格式转换</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- 头部 -->
+        <header class="header">
+            <div class="logo">
+                <svg class="logo__icon" viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/>
+                    <line x1="16" y1="17" x2="8" y2="17"/>
+                    <polyline points="10 9 9 9 8 9"/>
+                </svg>
+                <span class="logo__text">PDF2Word</span>
+            </div>
+            <p class="header__subtitle">免费在线文档格式转换，保持原始排版</p>
+        </header>
+
+        <!-- 主卡片：左侧栏 + 右侧内容区 -->
+        <main class="card">
+            <div class="layout">
+
+                <!-- ========== 左侧栏：模式选择 ========== -->
+                <aside class="sidebar" id="sidebar">
+                    <div class="sidebar__item sidebar__item--active"
+                         data-direction="word-to-pdf" id="sideWordToPdf">
+                        <svg class="sidebar__icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                        </svg>
+                        <div class="sidebar__text">
+                            <span class="sidebar__label">Word 转 PDF</span>
+                            <span class="sidebar__desc">.docx · .doc → .pdf</span>
+                        </div>
+                    </div>
+
+                    <div class="sidebar__divider"></div>
+
+                    <div class="sidebar__item"
+                         data-direction="pdf-to-word" id="sidePdfToWord">
+                        <svg class="sidebar__icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/>
+                            <polyline points="4 8 8 4 12 8 16 4 20 8"/>
+                            <line x1="8" y1="12" x2="16" y2="12"/>
+                            <line x1="8" y1="16" x2="16" y2="16"/>
+                        </svg>
+                        <div class="sidebar__text">
+                            <span class="sidebar__label">PDF 转 Word</span>
+                            <span class="sidebar__desc">.pdf → .docx</span>
+                        </div>
+                    </div>
+                </aside>
+
+                <!-- ========== 右侧内容区 ========== -->
+                <section class="main-content">
+
+                    <!-- 拖拽上传区 -->
+                    <div class="drop-zone" id="dropZone">
+                        <div class="drop-zone__content">
+                            <svg class="drop-zone__icon" viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
+                            <p class="drop-zone__text" id="dropZoneText">拖拽文件到此处</p>
+                            <p class="drop-zone__hint" id="dropZoneHint">或点击选择 — 支持 .docx / .doc / .pdf 文件，最大 50MB</p>
+                        </div>
+                        <input type="file" id="fileInput" hidden accept=".docx,.doc,.pdf">
+                    </div>
+
+                    <!-- 文件信息（选择文件后显示） -->
+                    <div class="file-info" id="fileInfo" style="display: none;">
+                        <div class="file-info__left">
+                            <svg class="file-info__icon" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <polyline points="14 2 14 8 20 8"/>
+                            </svg>
+                            <div class="file-info__detail">
+                                <span class="file-info__name" id="fileName"></span>
+                                <span class="file-info__size" id="fileSize"></span>
+                            </div>
+                        </div>
+                        <button class="file-info__remove" id="btnRemove" title="移除文件">
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- 开始转换按钮（FILE_SELECTED 状态时显示） -->
+                    <div class="convert-btn-area" id="convertBtnArea" style="display: none;">
+                        <button class="button button--convert" id="btnStartConvert">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="5 3 19 12 5 21 5 3"/>
+                            </svg>
+                            <span>开始转换</span>
+                        </button>
+                    </div>
+
+                    <!-- 进度区（上传中） -->
+                    <div class="progress-area" id="progressArea" style="display: none;">
+                        <div class="progress-bar">
+                            <div class="progress-bar__fill" id="progressFill"></div>
+                        </div>
+                        <p class="progress-text" id="progressText">上传中... 0%</p>
+                    </div>
+
+                    <!-- 转换状态（转换中） -->
+                    <div class="status-area" id="statusArea" style="display: none;">
+                        <div class="spinner">
+                            <div class="spinner__circle"></div>
+                        </div>
+                        <p class="status-text" id="statusText">正在转换 PDF...</p>
+                    </div>
+
+                    <!-- 结果区（转换完成） -->
+                    <div class="result-area" id="resultArea" style="display: none;">
+                        <svg class="result-icon" viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                            <polyline points="22 4 12 14.01 9 11.01"/>
+                        </svg>
+                        <p class="result-text">转换完成！</p>
+                        <p class="result-detail" id="resultDetail"></p>
+                        <div class="result-actions">
+                            <button class="button button--primary" id="btnDownload">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="7 10 12 15 17 10"/>
+                                    <line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                                <span id="btnDownloadText">下载文件</span>
+                            </button>
+                            <button class="button button--outline" id="btnNewConvert">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"/>
+                                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                                </svg>
+                                <span>重新转换</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 错误区 -->
+                    <div class="error-area" id="errorArea" style="display: none;">
+                        <svg class="error-icon" viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <circle cx="12" cy="12" r="10"/>
+                            <line x1="15" y1="9" x2="9" y2="15"/>
+                            <line x1="9" y1="9" x2="15" y2="15"/>
+                        </svg>
+                        <p class="error-text">转换失败</p>
+                        <p class="error-message" id="errorMessage"></p>
+                        <button class="button button--outline button--error" id="btnRetry">
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="23 4 23 10 17 10"/>
+                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                            </svg>
+                            <span>重试</span>
+                        </button>
+                    </div>
+
+                </section>
+            </div>
+        </main>
+
+        <!-- 底部 -->
+        <footer class="footer">
+            <p>Powered by LibreOffice &nbsp;|&nbsp; 完全免费，文件处理后自动清理</p>
+            <p><a href="/docs" target="_blank" class="footer__link">API 文档</a></p>
+        </footer>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="/js/api.js"></script>
+    <script src="/js/upload.js"></script>
+    <script src="/js/app.js"></script>
+</body>
+</html>
