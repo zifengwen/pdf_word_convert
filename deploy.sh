@@ -189,6 +189,7 @@ setup_systemd() {
 
 # ============================================================================
 # 4. 配置 Nginx 反向代理（可选）
+# 两阶段流程：先 HTTP（获取证书）→ 再 HTTPS
 # ============================================================================
 setup_nginx() {
     step "4/4 配置 Nginx 反向代理"
@@ -212,45 +213,171 @@ setup_nginx() {
         info "Nginx 已安装: $(nginx -v 2>&1)"
     fi
 
-    # 复制并配置 Nginx 配置
-    local nginx_src="$APP_DIR/nginx.conf"
+    # 创建 webroot 目录（certbot 验证用）
+    local webroot="/var/www/certbot"
+    mkdir -p "$webroot"
+
     local nginx_dst="/etc/nginx/sites-available/pdf2word"
 
-    if [ -f "$nginx_src" ]; then
-        info "配置 Nginx 站点..."
+    # ============================================================
+    # 阶段 1: 部署临时 HTTP-only 配置（不含 SSL 证书引用）
+    # ============================================================
+    info "阶段 1: 部署临时 HTTP 配置（用于证书验证）..."
 
-        # 替换占位符
-        sed -e "s|\${DOMAIN}|$DOMAIN|g" \
-            -e "s|\${APP_PORT}|$APP_PORT|g" \
-            "$nginx_src" > "$nginx_dst"
+    cat > "$nginx_dst" << NGINX_HTTP
+# 临时 HTTP 配置 — 用于 Let's Encrypt 域名验证
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
 
-        # 启用站点
-        ln -sf "$nginx_dst" /etc/nginx/sites-enabled/
-        rm -f /etc/nginx/sites-enabled/default
+    # ACME 验证目录
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
 
-        # 测试配置
-        if nginx -t; then
-            systemctl reload nginx
-            info "Nginx 配置已生效"
-        else
-            warn "Nginx 配置测试失败，请手动检查"
-        fi
+    # 反向代理到后端
+    location / {
+        proxy_pass http://127.0.0.1:${APP_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        client_max_body_size 100m;
+    }
+}
+NGINX_HTTP
+
+    # 启用站点
+    ln -sf "$nginx_dst" /etc/nginx/sites-enabled/
+    rm -f /etc/nginx/sites-enabled/default
+
+    if nginx -t 2>&1; then
+        systemctl reload nginx 2>/dev/null || systemctl start nginx
+        info "HTTP 临时配置已生效，Nginx 运行中"
     else
-        warn "未找到 nginx.conf 模板文件，跳过"
+        warn "Nginx HTTP 配置测试失败"
+        nginx -t 2>&1 || true
+        return
     fi
 
-    # 配置 SSL（如果域名可解析）
-    if command -v certbot &>/dev/null; then
-        info "检测到 certbot，尝试申请 SSL 证书..."
-        if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "admin@${DOMAIN}" --redirect; then
-            info "SSL 证书申请成功"
-        else
-            warn "SSL 证书申请失败，请手动执行: sudo certbot --nginx -d $DOMAIN"
-        fi
-    else
+    # ============================================================
+    # 阶段 2: 申请 SSL 证书
+    # ============================================================
+    info "阶段 2: 申请 SSL 证书..."
+
+    # 安装 certbot（如果未安装）
+    if ! command -v certbot &>/dev/null; then
         info "安装 certbot..."
         apt install -y certbot python3-certbot-nginx
-        info "手动申请证书: sudo certbot --nginx -d $DOMAIN"
+    fi
+
+    local cert_success=false
+
+    # 方式 1: 使用 webroot 模式（不需要修改 nginx 配置，最可靠）
+    info "使用 webroot 模式验证域名..."
+    if certbot certonly --webroot \
+        -w "$webroot" \
+        -d "$DOMAIN" \
+        --non-interactive --agree-tos \
+        --email "admin@${DOMAIN}" \
+        --keep-until-expiring 2>&1; then
+        cert_success=true
+        info "SSL 证书申请成功"
+    # 方式 2: 如果 webroot 失败，尝试 standalone 模式
+    elif systemctl stop nginx && certbot certonly --standalone \
+        -d "$DOMAIN" \
+        --non-interactive --agree-tos \
+        --email "admin@${DOMAIN}" 2>&1; then
+        cert_success=true
+        systemctl start nginx
+        info "SSL 证书申请成功（standalone 模式）"
+    else
+        systemctl start nginx 2>/dev/null || true
+        warn "SSL 证书申请失败，请检查域名 DNS 是否已解析到本服务器"
+        warn "手动申请: sudo certbot certonly --webroot -w $webroot -d $DOMAIN"
+    fi
+
+    # ============================================================
+    # 阶段 3: 部署完整 HTTPS 配置
+    # ============================================================
+    if [ "$cert_success" = true ]; then
+        info "阶段 3: 部署 HTTPS 配置..."
+
+        cat > "$nginx_dst" << NGINX_FULL
+# HTTP → HTTPS 重定向
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+# HTTPS 主服务
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${DOMAIN};
+
+    # SSL 证书
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+
+    # SSL 安全配置
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # 安全头
+    add_header Strict-Transport-Security "max-age=63072000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # 上传限制
+    client_max_body_size 100m;
+    client_body_timeout 300s;
+
+    # 反向代理
+    location / {
+        proxy_pass http://127.0.0.1:${APP_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+}
+NGINX_FULL
+
+        if nginx -t 2>&1; then
+            systemctl reload nginx
+            info "HTTPS 配置已生效: https://${DOMAIN}"
+        else
+            warn "HTTPS 配置测试失败，请手动检查: sudo nginx -t"
+            nginx -t 2>&1 || true
+        fi
+    else
+        warn "证书申请未成功，继续使用 HTTP 配置"
+        warn "启动 HTTPS: 先手动申请证书后，重新执行此脚本"
     fi
 
     info "Nginx 配置完成"
