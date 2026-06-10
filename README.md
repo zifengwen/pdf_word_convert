@@ -28,34 +28,95 @@
 
 ## 快速启动
 
-### 方式一：一键启动（Windows）
-
-双击运行 `start.bat`
-
-### 方式二：命令行启动
+### 方式一：Ubuntu 一键部署（推荐 · 生产环境）
 
 ```bash
-# 1. 创建虚拟环境
-python -m venv venv
+# 克隆项目后执行
+chmod +x deploy.sh
+sudo bash deploy.sh
 
-# 2. 激活虚拟环境
-# Windows:
-venv\Scripts\activate
-# Linux/macOS:
-source venv/bin/activate
-
-# 3. 安装依赖
-pip install -r backend/requirements.txt
-
-# 4. 启动服务
-uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+# 带域名 + Nginx 的一键部署
+sudo DOMAIN=pdf.example.com SETUP_NGINX=true bash deploy.sh
 ```
+
+部署完成后服务自动运行在后台，访问 `http://<服务器IP>:8000`。
+
+### 方式二：Ubuntu 命令行启动
+
+```bash
+chmod +x start.sh
+bash start.sh
+```
+
+### 方式三：Docker 部署
+
+```bash
+docker-compose up -d
+```
+
+### 方式四：Windows 一键启动
+
+双击运行 `start.bat`
 
 ### 访问
 
 - 前端页面：http://localhost:8000
 - API 文档（Swagger）：http://localhost:8000/docs
 - 健康检查：http://localhost:8000/api/health
+
+## Ubuntu 部署详解
+
+### 一键部署 (`deploy.sh`)
+
+脚本将自动完成以下步骤：
+
+1. 安装系统依赖（Python3、LibreOffice）
+2. 创建 Python 虚拟环境并安装依赖
+3. 配置 systemd 服务（开机自启、崩溃重启）
+4. 配置防火墙规则
+5. 可选：配置 Nginx 反向代理 + SSL 证书
+
+```bash
+# 完整部署
+sudo bash deploy.sh
+
+# 仅安装系统依赖
+sudo bash deploy.sh --install-deps
+
+# 仅配置 systemd 服务
+sudo bash deploy.sh --setup-systemd
+
+# 仅配置 Nginx
+sudo DOMAIN=pdf.example.com bash deploy.sh --setup-nginx
+```
+
+### systemd 服务管理
+
+```bash
+sudo systemctl status pdf2word     # 查看状态
+sudo systemctl restart pdf2word    # 重启服务
+sudo systemctl stop pdf2word       # 停止服务
+sudo journalctl -u pdf2word -f     # 查看实时日志
+```
+
+### Nginx 反向代理（推荐）
+
+1. 将 `nginx.conf` 中的 `${DOMAIN}` 替换为你的域名，`${APP_PORT}` 替换为后端端口
+2. 将配置文件复制到 Nginx 配置目录
+3. 申请 SSL 证书（Let's Encrypt）:
+
+```bash
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d your-domain.com
+```
+
+4. 重载 Nginx:
+
+```bash
+sudo nginx -t && sudo nginx -s reload
+```
+
+然后直接启动服务即可通过 `http://<公网IP>:8000` 访问。
 
 ## API 文档
 
@@ -213,7 +274,16 @@ function downloadFile(url) {
 | FILE_EXPIRY_MINUTES | 60 | 转换文件有效期 (分钟) |
 | CLEANUP_INTERVAL_MINUTES | 10 | 过期文件清理间隔 (分钟) |
 | LIBREOFFICE_PATH | soffice | LibreOffice 可执行文件路径 |
-| CORS_ORIGINS | * | 允许的跨域来源 |
+| **ALLOW_ALL_ORIGINS** | **false** | **是否允许所有跨域来源（公网无域名时临时开启）** |
+| **PUBLIC_URL** | **(空)** | **公网访问地址，如 https://pdf.example.com** |
+| CORS_ORIGINS | localhost:8000,... | 允许的跨域来源列表（逗号分隔，ALLOW_ALL_ORIGINS=true 时忽略） |
+| ENABLE_DOCS | false | 是否启用 /docs API 文档（生产环境建议关闭） |
+| RATE_LIMIT_REQUESTS | 30 | 全局频率限制（每 IP 每窗口请求数） |
+| RATE_LIMIT_WINDOW_SECONDS | 60 | 全局频率限制时间窗口 (秒) |
+| UPLOAD_RATE_LIMIT_REQUESTS | 10 | 上传端点频率限制 |
+| UPLOAD_RATE_LIMIT_WINDOW_SECONDS | 60 | 上传端点频率限制窗口 (秒) |
+| DOWNLOAD_RATE_LIMIT_REQUESTS | 20 | 下载端点频率限制 |
+| DOWNLOAD_RATE_LIMIT_WINDOW_SECONDS | 60 | 下载端点频率限制窗口 (秒) |
 
 ## 项目结构
 
@@ -245,9 +315,13 @@ pdf2word/
 │       ├── app.js               # 状态机
 │       ├── upload.js            # 拖拽上传
 │       └── api.js               # API 封装
+├── Dockerfile                   # Docker 镜像构建
+├── docker-compose.yml           # Docker Compose 编排
+├── nginx.conf                   # Nginx 反向代理配置模板
+├── .dockerignore                # Docker 构建忽略
 ├── .gitignore
 ├── README.md
-└── start.bat                    # 一键启动
+└── start.bat                    # 一键启动 (Windows)
 ```
 
 ## 技术栈

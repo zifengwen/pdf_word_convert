@@ -197,14 +197,20 @@ app.middleware("http")(security_headers_middleware)
 app.middleware("http")(rate_limit_middleware)
 
 # CORS 中间件
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+# 注意：当 allow_origins=["*"]（允许所有来源）时，allow_credentials 必须为 False
+cors_origins = settings.CORS_ORIGINS
+cors_kwargs: dict = dict(
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],
 )
+if cors_origins == ["*"]:
+    cors_kwargs["allow_credentials"] = False
+else:
+    cors_kwargs["allow_credentials"] = True
+
+app.add_middleware(CORSMiddleware, **cors_kwargs)
 
 # --- 注册 API 路由 ---
 from .api.router import api_router

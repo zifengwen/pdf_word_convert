@@ -36,3 +36,9 @@ backend/converted/*
 
 .claude/*
 test/*
+
+# SSL 证书（不应提交到版本控制）
+certs/
+*.pem
+*.key
+certbot-webroot/

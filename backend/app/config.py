@@ -1,9 +1,12 @@
 """应用配置 - 所有配置从环境变量或 .env 文件读取"""
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# 从 backend/.env 加载（相对于 config.py 的路径，确保无论从哪个目录启动都能正确加载）
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(_env_path)
 
 
 class Settings:
@@ -14,6 +17,12 @@ class Settings:
     APP_VERSION: str = "1.0.0"
     APP_HOST: str = os.getenv("APP_HOST", "0.0.0.0")
     APP_PORT: int = int(os.getenv("APP_PORT", "8000"))
+
+    # --- 公网访问配置 ---
+    # 是否允许所有跨域来源（设为 true 时忽略 CORS_ORIGINS 列表）
+    ALLOW_ALL_ORIGINS: bool = os.getenv("ALLOW_ALL_ORIGINS", "false").lower() in ("true", "1", "yes")
+    # 公网访问地址（用于文档展示，如 https://pdf.example.com）
+    PUBLIC_URL: str = os.getenv("PUBLIC_URL", "")
 
     # --- 文件上传限制 ---
     MAX_UPLOAD_SIZE_MB: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50"))
@@ -39,10 +48,16 @@ class Settings:
 
     # --- CORS ---
     # 生产环境务必配置为具体的域名列表，如 "https://example.com,https://www.example.com"
-    CORS_ORIGINS: list = os.getenv(
-        "CORS_ORIGINS",
-        "http://localhost:8000,http://127.0.0.1:8000"
-    ).split(",")
+    # 若 ALLOW_ALL_ORIGINS=true，则允许所有来源（不推荐生产环境使用）
+    @property
+    def CORS_ORIGINS(self) -> list:
+        if self.ALLOW_ALL_ORIGINS:
+            return ["*"]
+        origins = os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:8000,http://127.0.0.1:8000"
+        ).split(",")
+        return [o.strip() for o in origins if o.strip()]
 
     # --- 安全配置 ---
     # 是否启用 Swagger /docs 文档（生产环境建议关闭）

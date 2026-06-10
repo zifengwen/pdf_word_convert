@@ -1,0 +1,41 @@
+# ============================================================================
+# Docker 构建忽略文件
+# ============================================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# 临时文件
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/converted/*
+!backend/converted/.gitkeep
+
+# 测试文件
+test/
+
+# 证书和敏感文件
+certs/
+*.pem
+*.key
+
+# 文档
+README.md
+
+# 其他
+start.bat
+docker-compose.yml
+Dockerfile
+.dockerignore
