@@ -8,6 +8,7 @@ from ..models.schemas import ConvertData
 from ..services.converter import (
     ConversionError,
     ConversionTimeoutError,
+    EncryptedPDFError,
     LibreOfficeNotFoundError,
     converter,
 )
@@ -120,6 +121,12 @@ async def convert_file(
             ),
             "data": None,
         }
+    except EncryptedPDFError as e:
+        return {
+            "code": 4004,
+            "message": str(e),
+            "data": None,
+        }
     except ConversionTimeoutError:
         return {
             "code": 5001,
@@ -130,7 +137,7 @@ async def convert_file(
         logger.error("Conversion error: %s", e)
         return {
             "code": 5001,
-            "message": "文件转换失败，请确认文件未加密且未损坏",
+            "message": str(e),
             "data": None,
         }
     except Exception:

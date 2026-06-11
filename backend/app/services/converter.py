@@ -1,6 +1,7 @@
-"""LibreOffice 转换引擎 - 子进程调用、锁、超时处理"""
+"""LibreOffice 转换引擎 - 子进程调用、锁、超时处理、加密 PDF 预处理"""
 
 import asyncio
+import logging
 import os
 import shutil
 import subprocess
@@ -9,7 +10,11 @@ import tempfile
 import time
 from typing import Optional
 
+import fitz  # PyMuPDF — 用于检测/解密 PDF
+
 from ..config import settings
+
+logger = logging.getLogger("pdf2word")
 
 
 class LibreOfficeConverter:
@@ -122,8 +127,71 @@ class LibreOfficeConverter:
                 return com_path
         return self._libreoffice_path
 
+    # ---------- 加密 PDF 预处理 ----------
+
+    def _handle_encrypted_pdf(self, input_path: str) -> str:
+        """
+        检测 PDF 是否加密，若是则用 PyMuPDF 另存为无加密副本。
+        返回实际用于转换的 PDF 路径（可能是原路径或解密后的临时文件路径）。
+        """
+        doc = None
+        try:
+            doc = fitz.open(input_path)
+
+            if doc.is_encrypted:
+                logger.info("检测到加密 PDF，尝试用 PyMuPDF 解密: %s", input_path)
+                # PyMuPDF 可以处理有所有者密码的 PDF（无需用户密码）
+                # 只要文件能打开，就说明不需要用户密码，另存即可移除加密
+                decrypted_fd, decrypted_path = tempfile.mkstemp(suffix=".pdf")
+                os.close(decrypted_fd)
+                doc.save(decrypted_path, encryption=fitz.PDF_ENCRYPT_NONE)
+                doc.close()
+                doc = None
+                logger.info("PDF 解密成功: %s -> %s", input_path, decrypted_path)
+                # 注册临时文件以便后续清理
+                if not hasattr(self, '_temp_files'):
+                    self._temp_files = []
+                self._temp_files.append(decrypted_path)
+                return decrypted_path
+
+            doc.close()
+            doc = None
+            return input_path  # 未加密，直接使用原文件
+
+        except Exception as e:
+            if doc is not None:
+                try:
+                    doc.close()
+                except Exception:
+                    pass
+            error_msg = str(e)
+            if "password" in error_msg.lower() or "encrypt" in error_msg.lower():
+                raise EncryptedPDFError(
+                    "该 PDF 文件已加密且需要密码才能打开。"
+                    "请先移除 PDF 密码保护后再尝试转换。"
+                )
+            # 其他错误（如 PDF 损坏）→ 原样抛出，让 LibreOffice 尝试处理
+            logger.warning("PyMuPDF 预处理 PDF 时出错: %s，将直接使用 LibreOffice 尝试", error_msg)
+            return input_path
+
+    def _cleanup_temp_files(self):
+        """清理解密产生的临时文件"""
+        if hasattr(self, '_temp_files'):
+            for path in self._temp_files:
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except OSError:
+                    pass
+            self._temp_files.clear()
+
     async def _run_conversion(self, input_path: str, target_format: str, is_pdf_input: bool = False) -> str:
         """实际执行 LibreOffice 子进程调用"""
+        # 加密 PDF 预处理：用 PyMuPDF 解密后再交给 LibreOffice
+        actual_input = input_path
+        if is_pdf_input:
+            actual_input = self._handle_encrypted_pdf(input_path)
+
         # 为每次转换创建独立临时 profile（避免锁冲突）
         temp_profile = tempfile.mkdtemp(prefix="lo_profile_")
 
@@ -153,7 +221,7 @@ class LibreOfficeConverter:
             target_format,
             "--outdir",
             output_dir,
-            input_path,
+            actual_input,
         ])
 
         # 构建环境变量：确保 LibreOffice 能找到自己的库
@@ -188,21 +256,36 @@ class LibreOfficeConverter:
                 shutil.rmtree(temp_profile, ignore_errors=True)
             except Exception:
                 pass
+            # 清理解密产生的临时 PDF 文件
+            self._cleanup_temp_files()
 
         if result.returncode != 0:
             # 提取错误信息
             stderr = result.stderr or ""
+            stderr_lower = stderr.lower()
+            if "encrypted" in stderr_lower or "can't be opened" in stderr_lower:
+                raise EncryptedPDFError(
+                    "该 PDF 文件已加密或受保护，LibreOffice 无法打开。\n"
+                    "请尝试以下方法：\n"
+                    "1. 使用 Adobe Acrobat 或在线工具移除 PDF 密码保护\n"
+                    "2. 使用 qpdf 命令解密: qpdf --decrypt input.pdf output.pdf\n"
+                    "3. 确认 PDF 文件未被数字签名锁定"
+                )
             raise ConversionError(
                 f"转换失败 (exit code {result.returncode}): {stderr[:300]}"
             )
 
         # 推断输出文件名
+        # 优先用 actual_input 的 basename（LibreOffice 以此命名），再尝试原 input_path
+        actual_basename = os.path.splitext(os.path.basename(actual_input))[0]
         input_basename = os.path.splitext(os.path.basename(input_path))[0]
-        output_filename = f"{input_basename}.{target_format}"
+        output_filename = f"{actual_basename}.{target_format}"
         output_path = os.path.join(output_dir, output_filename)
 
         if not os.path.exists(output_path):
-            # 有时 LibreOffice 输出文件名略有不同，尝试查找
+            output_path = self._find_output(output_dir, actual_basename, target_format)
+        if not output_path or not os.path.exists(output_path):
+            # 再尝试原文件名的 basename
             output_path = self._find_output(output_dir, input_basename, target_format)
 
         if not output_path or not os.path.exists(output_path):
@@ -257,6 +340,11 @@ class ConversionError(Exception):
 
 class ConversionTimeoutError(Exception):
     """转换超时异常"""
+    pass
+
+
+class EncryptedPDFError(Exception):
+    """PDF 已加密且需要密码才能打开"""
     pass
 
 
